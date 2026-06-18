@@ -77,6 +77,7 @@ def normalize(posting: dict) -> dict:
         "salary_range_to": _money(cf.get("Salary Max")),
         "salary_frequency": cf.get("Salary Type") or "",
         "posting_type": cf.get("Applicant Type") or "",
+        "num_positions": cf.get("Number of Position") or "",
         "posting_date": (cf.get("Posted On Date")
                          or posting.get("releasedDate") or "")[:10],
     }
@@ -238,6 +239,11 @@ def render(jobs: list[dict], intro: str) -> tuple[str, str]:
             n += 1
             title = row.get("business_title", "Untitled")
             url = JOB_URL.format(job_id=row["job_id"])
+            try:
+                count = int(row.get("num_positions") or 1)
+            except ValueError:
+                count = 1
+            count_tag = f" x{count}" if count > 1 else ""  # stays non-bold
             details = [
                 org_line(row),
                 " · ".join(p for p in [
@@ -249,11 +255,11 @@ def render(jobs: list[dict], intro: str) -> tuple[str, str]:
             ]
             details = [d for d in details if d]
 
-            text_lines.append(f"{n}. {title}")
+            text_lines.append(f"{n}. {title}{count_tag}")
             text_lines += [f"   {d}" for d in details]
             text_lines.append(f"   {url}")
 
-            item = "<br>".join([f"<b>{escape(title)}</b>",
+            item = "<br>".join([f"<b>{escape(title)}</b>{escape(count_tag)}",
                                 *(escape(d) for d in details),
                                 f"<a href='{escape(url)}'>{escape(url)}</a>"])
             html_parts.append(f"<li>{item}</li>")
