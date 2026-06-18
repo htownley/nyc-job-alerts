@@ -2,9 +2,13 @@
 
 A small personal tool that emails a daily digest of NYC city job postings
 matching a set of keywords and agencies. It reads the public
-[NYC Jobs dataset](https://data.cityofnewyork.us/City-Government/NYC-Jobs/kpav-sd4t)
-on NYC Open Data, de-duplicates against postings it has already sent, and emails
-anything new. A GitHub Actions workflow runs it every morning.
+[cityjobs.nyc.gov](https://cityjobs.nyc.gov) postings feed (the SmartRecruiters
+`CityOfNewYork` API), de-duplicates against postings it has already sent, and
+emails anything new. A GitHub Actions workflow runs it daily.
+
+The feed only contains **currently-open** postings — once a posting closes it
+drops out, so closed/filled jobs can't be fetched retroactively. Running on a
+schedule is what builds up history over time.
 
 ## What it matches
 

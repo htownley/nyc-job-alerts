@@ -19,7 +19,6 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from html import escape
 from pathlib import Path
-from urllib.parse import urlencode
 
 import requests
 
@@ -37,8 +36,12 @@ KEYWORD_FIELDS = ["business_title", "civil_service_title", "job_category"]
 
 RECIPIENT = os.environ.get("RECIPIENT", "hendrick.townley@gmail.com")
 
-DATASET = "kpav-sd4t"  # "NYC Jobs" on data.cityofnewyork.us
-API = f"https://data.cityofnewyork.us/resource/{DATASET}.json"
+# cityjobs.nyc.gov runs on SmartRecruiters; its public postings API is the same
+# real-time source the site uses. It carries Agency, Borough, Division/Work Unit
+# and salary as structured fields, and `refNumber` matches the id cityjobs links
+# expect (cityjobs.nyc.gov/job/<refNumber> redirects to the posting's slug page).
+SR_COMPANY = os.environ.get("SR_COMPANY", "CityOfNewYork")
+API = f"https://api.smartrecruiters.com/v1/companies/{SR_COMPANY}/postings"
 JOB_URL = "https://cityjobs.nyc.gov/job/{job_id}"
 
 STATE_FILE = Path(__file__).with_name("seen_jobs.json")
@@ -49,30 +52,53 @@ AGENCIES = [a.strip() for a in AGENCIES if a.strip()]
 
 # --- Fetch -------------------------------------------------------------------
 
-def _like(field: str, needle: str) -> str:
-    needle = needle.upper().replace("'", "''")
-    return f"upper({field}) like '%{needle}%'"
+def _money(value: str | None) -> str | None:
+    """'$     83,718.00' -> '83718.00' so it can be parsed as a number."""
+    if not value:
+        return None
+    cleaned = value.replace("$", "").replace(",", "").strip()
+    return cleaned or None
 
 
-def build_where() -> str:
-    clauses = [f"agency='{a.replace(chr(39), chr(39) * 2)}'" for a in AGENCIES]
-    for kw in KEYWORDS:
-        for field in KEYWORD_FIELDS:
-            clauses.append(_like(field, kw))
-        # Also catch keyword in the agency name (e.g. OFFICE OF THE MAYOR).
-        clauses.append(_like("agency", kw))
-    return " OR ".join(clauses)
+def normalize(posting: dict) -> dict:
+    """Flatten a SmartRecruiters posting into the flat field names used below."""
+    cf = {f.get("fieldLabel"): f.get("valueLabel")
+          for f in (posting.get("customField") or [])}
+    return {
+        "job_id": posting.get("refNumber") or posting.get("id"),
+        "business_title": cf.get("Business Title") or posting.get("name") or "",
+        "civil_service_title": cf.get("Civil Service Title Description") or "",
+        "job_category": cf.get("Job Category") or "",
+        "agency": cf.get("Agency") or "",
+        "division_work_unit": cf.get("Division / Work Unit") or "",
+        "borough": cf.get("Borough") or "",
+        "work_location": cf.get("Work Location") or "",
+        "salary_range_from": _money(cf.get("Salary Min")),
+        "salary_range_to": _money(cf.get("Salary Max")),
+        "salary_frequency": cf.get("Salary Type") or "",
+        "posting_type": cf.get("Applicant Type") or "",
+        "posting_date": (cf.get("Posted On Date")
+                         or posting.get("releasedDate") or "")[:10],
+    }
 
 
 def fetch_postings() -> list[dict]:
-    params = {
-        "$where": build_where(),
-        "$order": "posting_date DESC",
-        "$limit": "1000",
-    }
-    resp = requests.get(API, params=urlencode(params), timeout=60)
-    resp.raise_for_status()
-    return resp.json()
+    """Page through all live postings, normalize, and keep only ones that match
+    our keywords/agencies."""
+    raw: list[dict] = []
+    offset, limit = 0, 100
+    while True:
+        resp = requests.get(API, params={"limit": limit, "offset": offset},
+                            timeout=60)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("content", [])
+        raw.extend(content)
+        offset += limit
+        if not content or offset >= data.get("totalFound", 0) or offset > 8000:
+            break
+    rows = [normalize(p) for p in raw]
+    return [r for r in rows if categorize(r)]
 
 
 def categorize(row: dict) -> list[tuple[str, str]]:
@@ -220,7 +246,9 @@ def render(jobs: list[dict], intro: str) -> tuple[str, str]:
                 " · ".join(p for p in [
                     fmt_salary(row), f"Posted {fmt_date(row.get('posting_date'))}"
                 ] if p),
-                clean(row.get("work_location", "")),
+                " · ".join(p for p in [
+                    clean(row.get("borough", "")), clean(row.get("work_location", ""))
+                ] if p),
             ]
             details = [d for d in details if d]
 
