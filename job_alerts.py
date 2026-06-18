@@ -75,19 +75,22 @@ def fetch_postings() -> list[dict]:
     return resp.json()
 
 
-def matched_terms(row: dict) -> list[str]:
-    """Human-readable list of why a row matched (for the email)."""
-    hits = []
-    agency = (row.get("agency") or "")
+def categorize(row: dict) -> list[tuple[str, str]]:
+    """All match reasons for a row as (kind, label) tuples.
+
+    kind is "agency" (an exact agency match, e.g. OTI) or "keyword".
+    """
+    cats: list[tuple[str, str]] = []
+    agency = row.get("agency") or ""
     if agency in AGENCIES:
-        hits.append(f"agency: {agency.title()}")
+        cats.append(("agency", titleize(agency)))
     haystack = " ".join(
         (row.get(f) or "") for f in (*KEYWORD_FIELDS, "agency")
     ).lower()
     for kw in KEYWORDS:
         if kw.lower() in haystack:
-            hits.append(f'"{kw}"')
-    return hits
+            cats.append(("keyword", kw))
+    return cats
 
 
 def dedupe(rows: list[dict]) -> dict[str, dict]:
@@ -114,59 +117,125 @@ def save_seen(seen: dict) -> None:
 
 # --- Email -------------------------------------------------------------------
 
+def titleize(value: str) -> str:
+    """Title-case all-caps source values; leave already-cased ones alone."""
+    value = (value or "").strip()
+    return value.title() if value.isupper() else value
+
+
 def fmt_salary(row: dict) -> str:
     lo, hi = row.get("salary_range_from"), row.get("salary_range_to")
     freq = (row.get("salary_frequency") or "").lower()
+    # Annual figures read best without cents; hourly/daily need them.
+    if "hour" in freq:
+        decimals, suffix = 2, "/hr"
+    elif "day" in freq:
+        decimals, suffix = 2, "/day"
+    else:
+        decimals, suffix = 0, ""
     try:
-        lo_s = f"${float(lo):,.0f}"
-        hi_s = f"${float(hi):,.0f}"
+        lo_s = f"${float(lo):,.{decimals}f}"
+        hi_s = f"${float(hi):,.{decimals}f}"
     except (TypeError, ValueError):
         return ""
     span = lo_s if lo_s == hi_s else f"{lo_s} – {hi_s}"
-    return f"{span}/{freq}" if freq else span
+    return span + suffix
+
+
+def fmt_date(value: str) -> str:
+    """'2026-06-17T00:00:00.000' -> 'Wed Jun 17, 2026'."""
+    try:
+        return datetime.fromisoformat(value).strftime("%a %b %-d, %Y")
+    except (TypeError, ValueError):
+        return (value or "")[:10]
+
+
+def group_by_match(jobs: list[dict]) -> list[tuple[tuple[str, str], list[dict]]]:
+    """Assign each posting to one match category, ordered least -> most noisy.
+
+    A posting can match several categories; it's filed under its most specific
+    one (agency match beats keyword; rarer keyword beats common one). Groups are
+    then ordered so the most relevant/least noisy lead and broad terms (e.g.
+    "tech") fall to the bottom.
+    """
+    counts: dict[tuple[str, str], int] = {}
+    cats_for: dict[str, list[tuple[str, str]]] = {}
+    for row in jobs:
+        cats = categorize(row)
+        cats_for[row["job_id"]] = cats
+        for cat in cats:
+            counts[cat] = counts.get(cat, 0) + 1
+
+    # Lower key == more specific: agencies before keywords, rarer before common.
+    def specificity(cat: tuple[str, str]) -> tuple:
+        kind, label = cat
+        return (0 if kind == "agency" else 1, counts[cat], label)
+
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for row in jobs:
+        cats = cats_for[row["job_id"]]
+        primary = min(cats, key=specificity) if cats else ("keyword", "other")
+        groups.setdefault(primary, []).append(row)
+
+    # Least noisy first: agency groups, then keyword groups by ascending size.
+    return sorted(groups.items(),
+                  key=lambda kv: (kv[0][0] != "agency", len(kv[1]), kv[0][1]))
+
+
+def header_for(cat: tuple[str, str]) -> str:
+    kind, label = cat
+    return f"{label} (agency)" if kind == "agency" else f"Keyword: “{label}”"
 
 
 def render(jobs: list[dict], intro: str) -> tuple[str, str]:
-    # Group by agency for readability.
-    groups: dict[str, list[dict]] = {}
-    for row in jobs:
-        groups.setdefault(row.get("agency", "—").title(), []).append(row)
+    text_lines = [intro]
+    html_parts = [
+        f"<p style='font-size:14px;color:#333'>{escape(intro)}</p>"
+    ]
 
-    text_lines = [intro, ""]
-    html_parts = [f"<p>{escape(intro)}</p>"]
-
-    for agency in sorted(groups):
-        text_lines.append(f"== {agency} ==")
-        html_parts.append(f"<h3 style='margin:18px 0 6px'>{escape(agency)}</h3>")
-        for row in groups[agency]:
+    n = 0
+    for cat, rows in group_by_match(jobs):
+        header = header_for(cat)
+        text_lines += ["", f"— {header} —"]
+        html_parts.append(
+            f"<h3 style='margin:22px 0 8px;font-size:13px;letter-spacing:.04em;"
+            f"text-transform:uppercase;color:#666'>{escape(header)}</h3>"
+        )
+        for row in rows:
+            n += 1
             title = row.get("business_title", "Untitled")
             url = JOB_URL.format(job_id=row["job_id"])
-            salary = fmt_salary(row)
-            ptype = row.get("posting_type", "")
-            posted = (row.get("posting_date") or "")[:10]
-            why = ", ".join(matched_terms(row))
-            meta = " · ".join(p for p in [ptype, salary, f"posted {posted}"] if p)
+            meta = " • ".join(p for p in [
+                row.get("agency", ""),
+                titleize(row.get("division_work_unit", "")),
+                titleize(row.get("work_location", "")),
+                fmt_salary(row),
+                f"Posted {fmt_date(row.get('posting_date'))}",
+            ] if p)
 
-            text_lines.append(f"  • {title}")
-            text_lines.append(f"    {meta}")
-            text_lines.append(f"    match: {why}")
-            text_lines.append(f"    {url}")
+            text_lines.append(
+                f"{n}. {title}  (Job ID {row['job_id']})\n"
+                f"   {meta}\n   {url}"
+            )
             html_parts.append(
-                f"<div style='margin:0 0 12px'>"
-                f"<a href='{escape(url)}' style='font-weight:600;font-size:15px'>"
-                f"{escape(title)}</a><br>"
-                f"<span style='color:#555;font-size:13px'>{escape(meta)}</span><br>"
-                f"<span style='color:#888;font-size:12px'>match: {escape(why)}</span>"
+                f"<div style='margin:0 0 14px;font-size:14px;line-height:1.4'>"
+                f"<span style='color:#999'>{n}.</span> "
+                f"<a href='{escape(url)}' style='font-weight:700;color:#0b5cad;"
+                f"text-decoration:none'>{escape(title)}</a> "
+                f"<span style='color:#aaa;font-size:12px'>"
+                f"Job ID {escape(row['job_id'])}</span><br>"
+                f"<span style='color:#555;font-size:13px'>{escape(meta)}</span> "
+                f"<a href='{escape(url)}' style='color:#0b5cad;font-size:13px'>"
+                f"view&nbsp;→</a>"
                 f"</div>"
             )
-        text_lines.append("")
 
     html = (
-        "<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
-        "max-width:640px'>" + "".join(html_parts) +
+        "<div style='font-family:-apple-system,Segoe UI,Roboto,Helvetica,"
+        "sans-serif;max-width:680px;margin:0 auto'>" + "".join(html_parts) +
         "<hr style='border:none;border-top:1px solid #eee;margin:20px 0'>"
         "<p style='color:#aaa;font-size:11px'>Source: NYC Open Data — NYC Jobs. "
-        "You can edit keywords/agencies in job_alerts.py.</p></div>"
+        "Edit keywords/agencies in job_alerts.py.</p></div>"
     )
     return "\n".join(text_lines), html
 
@@ -210,8 +279,11 @@ def main() -> int:
 
     if first_run:
         # Don't blast the entire backlog the first time — seed state and send a
-        # short confirmation so you know it's wired up.
-        sample = list(current.values())[:10]
+        # short confirmation. Sample a few from each match category so the
+        # grouping is visible.
+        sample = []
+        for _cat, rows_in_cat in group_by_match(list(current.values())):
+            sample.extend(rows_in_cat[:3])
         intro = (
             f"NYC job tracker is live. There are {len(current)} open postings "
             f"matching your filters right now; from tomorrow you'll only get "
