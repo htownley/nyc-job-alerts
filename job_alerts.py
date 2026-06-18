@@ -230,15 +230,21 @@ def render(jobs: list[dict], intro: str) -> tuple[str, str]:
             text_lines.append("")
 
             detail_html = "<br>".join(escape(d) for d in details)
+            # Table layout = reliable hanging indent in email clients: number in
+            # a fixed left gutter, title + details indented in the right column.
             html_parts.append(
-                f"<div style='margin:0 0 20px'>"
-                f"<div style='font-size:16px;color:#111'>"
-                f"<b>{n}.&nbsp; {escape(title)}</b></div>"
-                f"<div style='margin:3px 0 0 26px;font-size:14px;color:#444;"
-                f"line-height:1.55'>{detail_html}<br>"
+                "<table role='presentation' cellpadding='0' cellspacing='0' "
+                "style='margin:0 0 16px;border-collapse:collapse'><tr>"
+                f"<td style='vertical-align:top;width:34px;padding-right:6px;"
+                f"color:#999;font-size:16px;line-height:1.3'>{n}.</td>"
+                "<td style='vertical-align:top'>"
+                f"<div style='font-size:16px;color:#111;line-height:1.3'>"
+                f"<b>{escape(title)}</b></div>"
+                f"<div style='margin-top:4px;font-size:14px;color:#444;"
+                f"line-height:1.6'>{detail_html}<br>"
                 f"<a href='{escape(url)}' style='color:#0b5cad;"
                 f"text-decoration:none'>→ View posting</a></div>"
-                f"</div>"
+                "</td></tr></table>"
             )
 
     html = (
