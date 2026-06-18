@@ -222,17 +222,18 @@ def org_line(row: dict) -> str:
 
 
 def render(jobs: list[dict], intro: str) -> tuple[str, str]:
-    """Returns (plain_text, html). The HTML is intentionally bare — only <b> and
-    line breaks, no fonts/sizes/colours — so the mail client uses its own default
-    font and just bolds the title. Lines are flush (no indent); a blank line
-    separates sections only, not individual items."""
+    """Returns (plain_text, html). The HTML uses a native ordered list (<ol>/<li>)
+    so mail clients render it exactly like a numbered list you'd make in Gmail —
+    number in the margin, the item's lines hanging-indented under it. Only the
+    title is bolded; no fonts/sizes/colours/tables."""
     text_lines: list[str] = [intro]
-    html_lines: list[str] = [escape(intro)]
+    html_parts: list[str] = [f"<p>{escape(intro)}</p>"]
     n = 0
     for cat, rows in group_by_match(jobs):
         header = header_for(cat, len(rows))
         text_lines += ["", header]
-        html_lines += ["", f"<b>{escape(header)}</b>"]
+        html_parts.append(f"<p><b>{escape(header)}</b></p>")
+        html_parts.append(f'<ol start="{n + 1}">')
         for row in rows:
             n += 1
             title = row.get("business_title", "Untitled")
@@ -249,16 +250,18 @@ def render(jobs: list[dict], intro: str) -> tuple[str, str]:
             details = [d for d in details if d]
 
             text_lines.append(f"{n}. {title}")
-            text_lines += details
-            text_lines.append(url)
+            text_lines += [f"   {d}" for d in details]
+            text_lines.append(f"   {url}")
 
-            html_lines.append(f"{n}. <b>{escape(title)}</b>")
-            html_lines += [escape(d) for d in details]
-            html_lines.append(f"<a href='{escape(url)}'>{escape(url)}</a>")
+            item = "<br>".join([f"<b>{escape(title)}</b>",
+                                *(escape(d) for d in details),
+                                f"<a href='{escape(url)}'>{escape(url)}</a>"])
+            html_parts.append(f"<li>{item}</li>")
+        html_parts.append("</ol>")
 
     text_lines += ["", "Source: cityjobs.nyc.gov"]
-    html_lines += ["", "Source: cityjobs.nyc.gov"]
-    return "\n".join(text_lines), "<br>".join(html_lines)
+    html_parts.append("<p>Source: cityjobs.nyc.gov</p>")
+    return "\n".join(text_lines), "".join(html_parts)
 
 
 def send_email(subject: str, text: str, html: str) -> None:
