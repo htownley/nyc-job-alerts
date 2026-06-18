@@ -17,6 +17,7 @@ import smtplib
 import sys
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+from html import escape
 from pathlib import Path
 
 import requests
@@ -220,15 +221,22 @@ def org_line(row: dict) -> str:
     return f"{agency} — {office}" if office and office != agency else agency
 
 
-def render(jobs: list[dict], intro: str) -> str:
-    """A plain-text indented list. Sent as text/plain so mail clients preserve
-    the indentation (and use their own default font — no styling)."""
-    lines = [intro]
+def render(jobs: list[dict], intro: str) -> tuple[str, str]:
+    """Returns (plain_text, html). The HTML is intentionally bare — only <b> and
+    line breaks, no fonts/sizes/colours — so the mail client uses its own default
+    font and just bolds the title. Lines are flush (no indent); a blank line
+    separates sections only, not individual items."""
+    text_lines: list[str] = [intro]
+    html_lines: list[str] = [escape(intro)]
     n = 0
     for cat, rows in group_by_match(jobs):
-        lines += ["", header_for(cat, len(rows))]
+        header = header_for(cat, len(rows))
+        text_lines += ["", header]
+        html_lines += ["", f"<b>{escape(header)}</b>"]
         for row in rows:
             n += 1
+            title = row.get("business_title", "Untitled")
+            url = JOB_URL.format(job_id=row["job_id"])
             details = [
                 org_line(row),
                 " · ".join(p for p in [
@@ -238,16 +246,22 @@ def render(jobs: list[dict], intro: str) -> str:
                     clean(row.get("borough", "")), clean(row.get("work_location", ""))
                 ] if p),
             ]
-            lines.append(f"{n}.  {row.get('business_title', 'Untitled')}")
-            lines += [f"       {d}" for d in details if d]
-            lines.append(f"       {JOB_URL.format(job_id=row['job_id'])}")
-            lines.append("")
+            details = [d for d in details if d]
 
-    lines.append("Source: cityjobs.nyc.gov")
-    return "\n".join(lines)
+            text_lines.append(f"{n}. {title}")
+            text_lines += details
+            text_lines.append(url)
+
+            html_lines.append(f"{n}. <b>{escape(title)}</b>")
+            html_lines += [escape(d) for d in details]
+            html_lines.append(f"<a href='{escape(url)}'>{escape(url)}</a>")
+
+    text_lines += ["", "Source: cityjobs.nyc.gov"]
+    html_lines += ["", "Source: cityjobs.nyc.gov"]
+    return "\n".join(text_lines), "<br>".join(html_lines)
 
 
-def send_email(subject: str, text: str) -> None:
+def send_email(subject: str, text: str, html: str) -> None:
     user = os.environ["SMTP_USERNAME"].strip()
     # Gmail app passwords are displayed as "xxxx xxxx xxxx xxxx" but contain no
     # spaces; strip any whitespace (incl. non-breaking spaces) pasted in.
@@ -259,7 +273,8 @@ def send_email(subject: str, text: str) -> None:
     msg["Subject"] = subject
     msg["From"] = user
     msg["To"] = RECIPIENT
-    msg.set_content(text)  # plain text only — keeps the indentation intact
+    msg.set_content(text)
+    msg.add_alternative(html, subtype="html")  # bold title; client default font
 
     with smtplib.SMTP(host, port) as server:
         server.starttls()
@@ -292,11 +307,11 @@ def main() -> int:
             f"your filters were posted in the last {days} days (as of {today})."
         )
         subject = f"NYC jobs — last {days} days ({len(recent)} open matches)"
-        text = render(recent, intro)
+        text, html = render(recent, intro)
         if dry_run:
             print(f"\n--- DRY RUN (catch-up): would send to {RECIPIENT} ---\n{text}")
         else:
-            send_email(subject, text)
+            send_email(subject, text, html)
             print(f"Sent catch-up '{subject}' to {RECIPIENT}.")
         return 0
 
@@ -319,15 +334,15 @@ def main() -> int:
             f"newly posted ones. A sample of what's currently open:"
         )
         subject = f"NYC job tracker is live ({len(current)} open matches)"
-        text = render(sample, intro)
+        text, html = render(sample, intro)
     elif new_jobs:
         intro = f"{len(new_jobs)} new NYC posting(s) matched your filters today."
         subject = f"NYC jobs: {len(new_jobs)} new match(es) — {today}"
-        text = render(new_jobs, intro)
+        text, html = render(new_jobs, intro)
     else:
         print("No new postings today; no email sent.")
         # Still refresh state timestamps below.
-        text = subject = None
+        text = html = subject = None
 
     if subject is not None:
         if dry_run:
@@ -335,7 +350,7 @@ def main() -> int:
             print(f"Subject: {subject}\n")
             print(text)
         else:
-            send_email(subject, text)
+            send_email(subject, text, html)
             print(f"Sent '{subject}' to {RECIPIENT}.")
 
     # Update state: record every currently-matching id with first-seen date.
