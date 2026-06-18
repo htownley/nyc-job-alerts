@@ -4,7 +4,12 @@ on:
   schedule:
     # 11:00 UTC = 7:00 AM America/New_York (EDT). Adjust as you like.
     - cron: "0 11 * * *"
-  workflow_dispatch: {}  # lets you run it on demand from the Actions tab
+  workflow_dispatch:      # lets you run it on demand from the Actions tab
+    inputs:
+      since_days:
+        description: "Catch-up: email ALL open matches posted in the last N days (leave blank for the normal daily digest)"
+        required: false
+        default: ""
 
 permissions:
   contents: write  # needed to commit the updated seen_jobs.json state
@@ -30,6 +35,7 @@ jobs:
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           RECIPIENT: ${{ secrets.RECIPIENT }}
+          SINCE_DAYS: ${{ github.event.inputs.since_days }}
         run: python job_alerts.py
 
       - name: Persist seen-jobs state

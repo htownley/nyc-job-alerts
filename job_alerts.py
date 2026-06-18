@@ -15,7 +15,7 @@ import json
 import os
 import smtplib
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from html import escape
 from pathlib import Path
@@ -83,7 +83,7 @@ def categorize(row: dict) -> list[tuple[str, str]]:
     cats: list[tuple[str, str]] = []
     agency = row.get("agency") or ""
     if agency in AGENCIES:
-        cats.append(("agency", titleize(agency)))
+        cats.append(("agency", clean(agency)))
     haystack = " ".join(
         (row.get(f) or "") for f in (*KEYWORD_FIELDS, "agency")
     ).lower()
@@ -117,10 +117,11 @@ def save_seen(seen: dict) -> None:
 
 # --- Email -------------------------------------------------------------------
 
-def titleize(value: str) -> str:
-    """Title-case all-caps source values; leave already-cased ones alone."""
-    value = (value or "").strip()
-    return value.title() if value.isupper() else value
+def clean(value: str) -> str:
+    """Return the source value as-is (trimmed). We never re-case the data: the
+    dataset's capitalization is authoritative, so ALL-CAPS stays ALL-CAPS rather
+    than us guessing the 'right' casing."""
+    return (value or "").strip()
 
 
 def fmt_salary(row: dict) -> str:
@@ -182,60 +183,71 @@ def group_by_match(jobs: list[dict]) -> list[tuple[tuple[str, str], list[dict]]]
                   key=lambda kv: (kv[0][0] != "agency", len(kv[1]), kv[0][1]))
 
 
-def header_for(cat: tuple[str, str]) -> str:
+def header_for(cat: tuple[str, str], count: int) -> str:
     kind, label = cat
-    return f"{label} (agency)" if kind == "agency" else f"Keyword: “{label}”"
+    base = label if kind == "agency" else f"Keyword: “{label}”"
+    return f"{base} · {count} match{'es' if count != 1 else ''}"
+
+
+def org_line(row: dict) -> str:
+    agency = clean(row.get("agency", ""))
+    office = clean(row.get("division_work_unit", ""))
+    return f"{agency} — {office}" if office and office != agency else agency
 
 
 def render(jobs: list[dict], intro: str) -> tuple[str, str]:
     text_lines = [intro]
     html_parts = [
-        f"<p style='font-size:14px;color:#333'>{escape(intro)}</p>"
+        f"<p style='margin:0 0 4px;font-size:16px;color:#222'>{escape(intro)}</p>"
     ]
 
     n = 0
     for cat, rows in group_by_match(jobs):
-        header = header_for(cat)
-        text_lines += ["", f"— {header} —"]
+        header = header_for(cat, len(rows))
+        text_lines += ["", header, "─" * min(len(header), 52)]
         html_parts.append(
-            f"<h3 style='margin:22px 0 8px;font-size:13px;letter-spacing:.04em;"
-            f"text-transform:uppercase;color:#666'>{escape(header)}</h3>"
+            f"<div style='margin:30px 0 10px;padding-bottom:5px;font-size:13px;"
+            f"font-weight:700;color:#111;border-bottom:1px solid #e3e3e3'>"
+            f"{escape(header)}</div>"
         )
         for row in rows:
             n += 1
             title = row.get("business_title", "Untitled")
             url = JOB_URL.format(job_id=row["job_id"])
-            meta = " • ".join(p for p in [
-                row.get("agency", ""),
-                titleize(row.get("division_work_unit", "")),
-                titleize(row.get("work_location", "")),
-                fmt_salary(row),
-                f"Posted {fmt_date(row.get('posting_date'))}",
-            ] if p)
+            # Indented detail lines, each kept short for easy scanning.
+            details = [
+                org_line(row),
+                " · ".join(p for p in [
+                    fmt_salary(row), f"Posted {fmt_date(row.get('posting_date'))}"
+                ] if p),
+                clean(row.get("work_location", "")),
+            ]
+            details = [d for d in details if d]
 
-            text_lines.append(
-                f"{n}. {title}  (Job ID {row['job_id']})\n"
-                f"   {meta}\n   {url}"
-            )
+            text_lines.append(f"{n}.  {title}")
+            text_lines += [f"       {d}" for d in details]
+            text_lines.append(f"       → View posting: {url}")
+            text_lines.append("")
+
+            detail_html = "<br>".join(escape(d) for d in details)
             html_parts.append(
-                f"<div style='margin:0 0 14px;font-size:14px;line-height:1.4'>"
-                f"<span style='color:#999'>{n}.</span> "
-                f"<a href='{escape(url)}' style='font-weight:700;color:#0b5cad;"
-                f"text-decoration:none'>{escape(title)}</a> "
-                f"<span style='color:#aaa;font-size:12px'>"
-                f"Job ID {escape(row['job_id'])}</span><br>"
-                f"<span style='color:#555;font-size:13px'>{escape(meta)}</span> "
-                f"<a href='{escape(url)}' style='color:#0b5cad;font-size:13px'>"
-                f"view&nbsp;→</a>"
+                f"<div style='margin:0 0 20px'>"
+                f"<div style='font-size:16px;color:#111'>"
+                f"<b>{n}.&nbsp; {escape(title)}</b></div>"
+                f"<div style='margin:3px 0 0 26px;font-size:14px;color:#444;"
+                f"line-height:1.55'>{detail_html}<br>"
+                f"<a href='{escape(url)}' style='color:#0b5cad;"
+                f"text-decoration:none'>→ View posting</a></div>"
                 f"</div>"
             )
 
     html = (
-        "<div style='font-family:-apple-system,Segoe UI,Roboto,Helvetica,"
-        "sans-serif;max-width:680px;margin:0 auto'>" + "".join(html_parts) +
-        "<hr style='border:none;border-top:1px solid #eee;margin:20px 0'>"
-        "<p style='color:#aaa;font-size:11px'>Source: NYC Open Data — NYC Jobs. "
-        "Edit keywords/agencies in job_alerts.py.</p></div>"
+        "<div style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,"
+        "Roboto,Helvetica,Arial,sans-serif;max-width:600px;margin:0 auto;"
+        "padding:8px 4px'>" + "".join(html_parts) +
+        "<hr style='border:none;border-top:1px solid #eee;margin:24px 0 12px'>"
+        "<p style='color:#aaa;font-size:11px;line-height:1.4'>Source: NYC Open "
+        "Data — NYC Jobs. Edit keywords/agencies in job_alerts.py.</p></div>"
     )
     return "\n".join(text_lines), html
 
@@ -270,6 +282,29 @@ def main() -> int:
     rows = fetch_postings()
     current = dedupe(rows)
     print(f"Fetched {len(rows)} rows → {len(current)} unique postings.")
+
+    # Catch-up mode: email every currently-open match posted in the last N days
+    # without touching the daily de-dup state. Triggered manually.
+    since_days = os.environ.get("SINCE_DAYS")
+    if since_days and int(since_days) > 0:
+        days = int(since_days)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+        recent = sorted(
+            (r for r in current.values() if (r.get("posting_date") or "")[:10] >= cutoff),
+            key=lambda r: r.get("posting_date", ""), reverse=True,
+        )
+        intro = (
+            f"Catch-up snapshot: {len(recent)} currently-open posting(s) matching "
+            f"your filters were posted in the last {days} days (as of {today})."
+        )
+        subject = f"NYC jobs — last {days} days ({len(recent)} open matches)"
+        text, html = render(recent, intro)
+        if dry_run:
+            print(f"\n--- DRY RUN (catch-up): would send to {RECIPIENT} ---\n{text}")
+        else:
+            send_email(subject, text, html)
+            print(f"Sent catch-up '{subject}' to {RECIPIENT}.")
+        return 0
 
     seen = load_seen()
     first_run = not seen
