@@ -223,24 +223,17 @@ def org_line(row: dict) -> str:
 
 def render(jobs: list[dict], intro: str) -> tuple[str, str]:
     text_lines = [intro]
-    html_parts = [
-        f"<p style='margin:0 0 4px;font-size:16px;color:#222'>{escape(intro)}</p>"
-    ]
+    html_parts = [f"<p>{escape(intro)}</p>"]
 
     n = 0
     for cat, rows in group_by_match(jobs):
         header = header_for(cat, len(rows))
-        text_lines += ["", header, "─" * min(len(header), 52)]
-        html_parts.append(
-            f"<div style='margin:30px 0 10px;padding-bottom:5px;font-size:13px;"
-            f"font-weight:700;color:#111;border-bottom:1px solid #e3e3e3'>"
-            f"{escape(header)}</div>"
-        )
+        text_lines += ["", header]
+        html_parts.append(f"<p style='margin:18px 0 6px'><b>{escape(header)}</b></p>")
         for row in rows:
             n += 1
             title = row.get("business_title", "Untitled")
             url = JOB_URL.format(job_id=row["job_id"])
-            # Indented detail lines, each kept short for easy scanning.
             details = [
                 org_line(row),
                 " · ".join(p for p in [
@@ -254,34 +247,26 @@ def render(jobs: list[dict], intro: str) -> tuple[str, str]:
 
             text_lines.append(f"{n}.  {title}")
             text_lines += [f"       {d}" for d in details]
-            text_lines.append(f"       → View posting: {url}")
+            text_lines.append(f"       View posting: {url}")
             text_lines.append("")
 
-            detail_html = "<br>".join(escape(d) for d in details)
-            # Table layout = reliable hanging indent in email clients: number in
-            # a fixed left gutter, title + details indented in the right column.
+            # Plain indented list: one size, one colour; only the title is bold.
+            inner = "<br>".join([f"<b>{escape(title)}</b>",
+                                 *(escape(d) for d in details),
+                                 f"<a href='{escape(url)}'>View posting</a>"])
             html_parts.append(
-                "<table role='presentation' cellpadding='0' cellspacing='0' "
-                "style='margin:0 0 16px;border-collapse:collapse'><tr>"
-                f"<td style='vertical-align:top;width:34px;padding-right:6px;"
-                f"color:#999;font-size:16px;line-height:1.3'>{n}.</td>"
-                "<td style='vertical-align:top'>"
-                f"<div style='font-size:16px;color:#111;line-height:1.3'>"
-                f"<b>{escape(title)}</b></div>"
-                f"<div style='margin-top:4px;font-size:14px;color:#444;"
-                f"line-height:1.6'>{detail_html}<br>"
-                f"<a href='{escape(url)}' style='color:#0b5cad;"
-                f"text-decoration:none'>→ View posting</a></div>"
-                "</td></tr></table>"
+                "<table role='presentation' cellpadding='0' cellspacing='0'><tr>"
+                "<td style='vertical-align:top;padding:0 6px 12px 0'>"
+                f"{n}.</td>"
+                f"<td style='vertical-align:top;padding-bottom:12px'>{inner}</td>"
+                "</tr></table>"
             )
 
+    text_lines.append("Source: cityjobs.nyc.gov")
     html = (
-        "<div style='font-family:-apple-system,BlinkMacSystemFont,Segoe UI,"
-        "Roboto,Helvetica,Arial,sans-serif;max-width:600px;margin:0 auto;"
-        "padding:8px 4px'>" + "".join(html_parts) +
-        "<hr style='border:none;border-top:1px solid #eee;margin:24px 0 12px'>"
-        "<p style='color:#aaa;font-size:11px;line-height:1.4'>Source: NYC Open "
-        "Data — NYC Jobs. Edit keywords/agencies in job_alerts.py.</p></div>"
+        "<div style='font-family:Arial,Helvetica,sans-serif;font-size:14px;"
+        "color:#000;max-width:640px'>" + "".join(html_parts) +
+        "<p>Source: cityjobs.nyc.gov</p></div>"
     )
     return "\n".join(text_lines), html
 
