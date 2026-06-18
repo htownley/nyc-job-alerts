@@ -306,7 +306,12 @@ def main() -> int:
             f"Catch-up snapshot: {len(recent)} currently-open posting(s) matching "
             f"your filters were posted in the last {days} days (as of {today})."
         )
-        subject = f"NYC jobs — last {days} days ({len(recent)} open matches)"
+        try:
+            from zoneinfo import ZoneInfo
+            stamp = datetime.now(ZoneInfo("America/New_York")).strftime("%-I:%M %p ET")
+        except Exception:
+            stamp = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        subject = f"NYC jobs — last {days} days ({len(recent)} matches) — sent {stamp}"
         text, html = render(recent, intro)
         if dry_run:
             print(f"\n--- DRY RUN (catch-up): would send to {RECIPIENT} ---\n{text}")
