@@ -2,12 +2,9 @@ name: NYC job alerts
 
 on:
   schedule:
-    # The NYC Jobs dataset refreshes in the afternoon ET, so the evening run
-    # catches that day's new postings same-day; the morning run is the daily
-    # scan + anything that landed late. De-dup means no posting is ever emailed
-    # twice. Times are UTC (no DST) — in EDT that's ~7 AM and ~6 PM Eastern;
-    # in EST they shift to ~6 AM and ~5 PM.
-    - cron: "0 11 * * *"   # ~7:00 AM ET
+    # The NYC Jobs dataset refreshes in the afternoon ET, so an evening run
+    # catches that day's new postings same-day. Time is UTC (no DST) — that's
+    # ~6 PM Eastern in EDT, shifting to ~5 PM in EST.
     - cron: "0 22 * * *"   # ~6:00 PM ET
   workflow_dispatch:      # lets you run it on demand from the Actions tab
     inputs:
