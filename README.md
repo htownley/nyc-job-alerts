@@ -54,7 +54,7 @@ the digest catches postings added that same day. Edit the cron in
 
 ```bash
 pip install -r requirements.txt
-DRY_RUN=1 python job_alerts.py          # prints the digest, sends nothing
+DRY_RUN=1 python job_alerts.py          # prints the digest; sends and writes nothing
 ```
 
 To send for real locally, set `SMTP_USERNAME`, `SMTP_PASSWORD`, and `RECIPIENT`
@@ -69,4 +69,4 @@ in your environment and drop `DRY_RUN`.
 | `RECIPIENT`     | `hendrick.townley@gmail.com` | Digest destination                      |
 | `SMTP_HOST`     | `smtp.gmail.com`             |                                         |
 | `SMTP_PORT`     | `587`                        |                                         |
-| `DRY_RUN`       | unset                        | `1` = print instead of send             |
+| `DRY_RUN`       | unset                        | `1` = print; no email, no state write   |

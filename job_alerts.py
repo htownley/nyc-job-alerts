@@ -7,7 +7,8 @@ previously seen postings, and emails a digest of anything new — or a short
 "no new matches" heartbeat on quiet days. State is kept in ``seen_jobs.json``
 so each posting is only ever alerted once.
 
-Run locally:  DRY_RUN=1 python job_alerts.py
+Run locally:  DRY_RUN=1 python job_alerts.py   (prints the digest; sends and
+writes nothing)
 """
 
 from __future__ import annotations
@@ -376,10 +377,15 @@ def main() -> int:
         print(f"Sent '{subject}' to {RECIPIENT}.")
 
     # Update state: record every currently-matching id with first-seen date.
+    # Never written on dry runs — marking a posting seen without having sent
+    # it would make the next real run skip it silently.
     for jid in current:
         seen.setdefault(jid, today)
-    save_seen(seen)
-    print(f"State now tracks {len(seen)} postings.")
+    if dry_run:
+        print(f"DRY RUN: state not written (would track {len(seen)} postings).")
+    else:
+        save_seen(seen)
+        print(f"State now tracks {len(seen)} postings.")
     return 0
 
 
