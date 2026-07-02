@@ -4,7 +4,9 @@ A small personal tool that emails a daily digest of NYC city job postings
 matching a set of keywords and agencies. It reads the public
 [cityjobs.nyc.gov](https://cityjobs.nyc.gov) postings feed (the SmartRecruiters
 `CityOfNewYork` API), de-duplicates against postings it has already sent, and
-emails anything new. A GitHub Actions workflow runs it daily.
+emails anything new. On days with no new matches it sends a short "no new
+matches" note instead, so a quiet day is distinguishable from a broken tracker.
+A GitHub Actions workflow runs it daily.
 
 The feed only contains **currently-open** postings — once a posting closes it
 drops out, so closed/filled jobs can't be fetched retroactively. Running on a
@@ -44,7 +46,8 @@ repo after each run. On the very first run it seeds this file and sends a short
 4. Optionally trigger a test run from the **Actions** tab
    (**NYC job alerts → Run workflow**).
 
-The schedule is `0 11 * * *` (11:00 UTC ≈ 7:00 AM Eastern). Edit the cron in
+The schedule is `0 22 * * *` (22:00 UTC ≈ 6:00 PM Eastern), an evening run so
+the digest catches postings added that same day. Edit the cron in
 `.github/workflows/daily.yml` to change the time.
 
 ## Run locally

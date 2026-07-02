@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Daily digest of NYC city job postings matching a set of keywords/agencies.
 
-Queries the public NYC Jobs dataset on NYC Open Data (Socrata), filters for
-postings of interest, de-duplicates against previously seen postings, and emails
-a digest of anything new. State is kept in ``seen_jobs.json`` so each posting is
-only ever alerted once.
+Queries the public cityjobs.nyc.gov postings feed (the SmartRecruiters
+``CityOfNewYork`` API), filters for postings of interest, de-duplicates against
+previously seen postings, and emails a digest of anything new — or a short
+"no new matches" heartbeat on quiet days. State is kept in ``seen_jobs.json``
+so each posting is only ever alerted once.
 
 Run locally:  DRY_RUN=1 python job_alerts.py
 """
@@ -354,18 +355,25 @@ def main() -> int:
         subject = f"NYC jobs: {len(new_jobs)} new match(es) — {today}"
         text, html = render(new_jobs, intro)
     else:
-        print("No new postings today; no email sent.")
-        # Still refresh state timestamps below.
-        text = html = subject = None
+        # Heartbeat: send a short note even when nothing is new, so a quiet
+        # day is distinguishable from a broken tracker. The open-postings
+        # count doubles as a health signal — "no new out of ~300 open" is a
+        # quiet day; "out of 0 open" means the feed or filters broke.
+        intro = (
+            f"No new NYC postings matched your filters today. "
+            f"({len(current)} matching postings currently open; "
+            f"{len(seen)} tracked all-time.)"
+        )
+        subject = f"NYC jobs: no new matches — {today}"
+        text, html = render([], intro)
 
-    if subject is not None:
-        if dry_run:
-            print(f"\n--- DRY RUN: would send to {RECIPIENT} ---")
-            print(f"Subject: {subject}\n")
-            print(text)
-        else:
-            send_email(subject, text, html)
-            print(f"Sent '{subject}' to {RECIPIENT}.")
+    if dry_run:
+        print(f"\n--- DRY RUN: would send to {RECIPIENT} ---")
+        print(f"Subject: {subject}\n")
+        print(text)
+    else:
+        send_email(subject, text, html)
+        print(f"Sent '{subject}' to {RECIPIENT}.")
 
     # Update state: record every currently-matching id with first-seen date.
     for jid in current:
