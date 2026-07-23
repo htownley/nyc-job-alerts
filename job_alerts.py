@@ -33,6 +33,15 @@ KEYWORDS = os.environ.get("KEYWORDS", "tech,product,mayor").split(",")
 # is the Office of Technology & Innovation (OTI).
 AGENCIES = os.environ.get("AGENCIES", "TECHNOLOGY & INNOVATION").split("||")
 
+# Divisions/work units to spotlight as their own group at the top of the digest,
+# regardless of which agency sponsors them. MOME (Mayor's Office of Media and
+# Entertainment) is sponsored by OTI, so its postings already match the agency
+# filter above — this just pulls them out under their own heading. Keys match the
+# source "Division / Work Unit" spelling; values are the heading to display.
+SPOTLIGHT_DIVISIONS = {
+    "MOME": "MOME (Media & Entertainment)",
+}
+
 # Fields the keywords are searched in.
 KEYWORD_FIELDS = ["business_title", "civil_service_title", "job_category"]
 
@@ -107,9 +116,13 @@ def fetch_postings() -> list[dict]:
 def categorize(row: dict) -> list[tuple[str, str]]:
     """All match reasons for a row as (kind, label) tuples.
 
-    kind is "agency" (an exact agency match, e.g. OTI) or "keyword".
+    kind is "division" (a spotlighted work unit, e.g. MOME), "agency" (an exact
+    agency match, e.g. OTI), or "keyword".
     """
     cats: list[tuple[str, str]] = []
+    division = clean(row.get("division_work_unit"))
+    if division in SPOTLIGHT_DIVISIONS:
+        cats.append(("division", SPOTLIGHT_DIVISIONS[division]))
     agency = row.get("agency") or ""
     if agency in AGENCIES:
         cats.append(("agency", clean(agency)))
@@ -184,9 +197,9 @@ def group_by_match(jobs: list[dict]) -> list[tuple[tuple[str, str], list[dict]]]
     """Assign each posting to one match category, ordered least -> most noisy.
 
     A posting can match several categories; it's filed under its most specific
-    one (agency match beats keyword; rarer keyword beats common one). Groups are
-    then ordered so the most relevant/least noisy lead and broad terms (e.g.
-    "tech") fall to the bottom.
+    one (spotlighted division beats agency beats keyword; rarer keyword beats
+    common one). Groups are then ordered so the most relevant/least noisy lead
+    and broad terms (e.g. "tech") fall to the bottom.
     """
     counts: dict[tuple[str, str], int] = {}
     cats_for: dict[str, list[tuple[str, str]]] = {}
@@ -196,10 +209,13 @@ def group_by_match(jobs: list[dict]) -> list[tuple[tuple[str, str], list[dict]]]
         for cat in cats:
             counts[cat] = counts.get(cat, 0) + 1
 
-    # Lower key == more specific: agencies before keywords, rarer before common.
+    # Lower rank == more specific: spotlighted divisions, then agencies, then
+    # keywords; within a kind, rarer before common.
+    kind_rank = {"division": 0, "agency": 1}
+
     def specificity(cat: tuple[str, str]) -> tuple:
         kind, label = cat
-        return (0 if kind == "agency" else 1, counts[cat], label)
+        return (kind_rank.get(kind, 2), counts[cat], label)
 
     groups: dict[tuple[str, str], list[dict]] = {}
     for row in jobs:
@@ -207,14 +223,15 @@ def group_by_match(jobs: list[dict]) -> list[tuple[tuple[str, str], list[dict]]]
         primary = min(cats, key=specificity) if cats else ("keyword", "other")
         groups.setdefault(primary, []).append(row)
 
-    # Least noisy first: agency groups, then keyword groups by ascending size.
+    # Least noisy first: spotlighted divisions, then agencies, then keyword
+    # groups by ascending size.
     return sorted(groups.items(),
-                  key=lambda kv: (kv[0][0] != "agency", len(kv[1]), kv[0][1]))
+                  key=lambda kv: (kind_rank.get(kv[0][0], 2), len(kv[1]), kv[0][1]))
 
 
 def header_for(cat: tuple[str, str], count: int) -> str:
     kind, label = cat
-    base = label if kind == "agency" else f"Keyword: “{label}”"
+    base = label if kind in ("division", "agency") else f"Keyword: “{label}”"
     return f"{base} · {count} match{'es' if count != 1 else ''}"
 
 
